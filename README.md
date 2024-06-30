@@ -26,7 +26,7 @@ The game includes multiple Pokémon types such as Fire, Water, Grass, Electric, 
 
 1. Clone the repository:
     ```sh
-    git clone https://github.com/your-username/pokemon-battle-game.git
+    git clone https://github.com/mikeorte/Pokemon-Battle.git
     ```
 2. Navigate to the project directory:
     ```sh
