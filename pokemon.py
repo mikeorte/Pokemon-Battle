@@ -12,6 +12,7 @@ TYPE_ADVANTAGE_MULTIPLIER = 1.5
 TYPE_DISADVANTAGE_MULTIPLIER = 0.75
 PRINT_DELAY = 0.05
 TYPE_NEUTRAL = 1
+MESSAGE_DELAY = 700  # 0.7 second delay between messages
 
 def delay_print(s: str) -> None:
     """Print one character at a time with a delay."""
@@ -46,6 +47,12 @@ class Move:
         self.power = power
         self.m_type = m_type
 
+class StatusEffect(Enum):
+    NONE = "None"
+    BURN = "Burn"
+    PARALYSIS = "Paralysis"
+    POISON = "Poison"
+
 class Pokemon:
     def __init__(self, name: str, p_type: PokemonType, moves: List[Move], EVs: Dict[str, int]):
         self.name = name
@@ -55,9 +62,13 @@ class Pokemon:
         self.defense = EVs["DEFENSE"]
         self.max_bars = HEALTH_BAR_LENGTH
         self.bars = HEALTH_BAR_LENGTH
+        self.status = StatusEffect.NONE
 
     def health_percentage(self):
         return int((self.bars / self.max_bars) * 100)
+
+    def apply_status_effect(self, effect: StatusEffect):
+        self.status = effect
 
 class Battle:
     def __init__(self, root, pokemon1: Pokemon, pokemon2: Pokemon):
@@ -82,14 +93,14 @@ class Battle:
         self.battle_frame = tk.Frame(self.root)
         self.battle_frame.pack(pady=20)
 
-        self.pokemon1_label = tk.Label(self.battle_frame, text=f"{self.pokemon1.name}")
+        self.pokemon1_label = tk.Label(self.battle_frame, text=f"{self.pokemon1.name}", font=('Helvetica', 12, 'bold'))
         self.pokemon1_label.grid(row=0, column=0, padx=10)
 
         self.pokemon1_health = ttk.Progressbar(self.battle_frame, length=200, maximum=100)
         self.pokemon1_health.grid(row=1, column=0, padx=10)
         self.pokemon1_health['value'] = self.pokemon1.health_percentage()
 
-        self.pokemon2_label = tk.Label(self.battle_frame, text=f"{self.pokemon2.name}")
+        self.pokemon2_label = tk.Label(self.battle_frame, text=f"{self.pokemon2.name}", font=('Helvetica', 12, 'bold'))
         self.pokemon2_label.grid(row=0, column=1, padx=10)
 
         self.pokemon2_health = ttk.Progressbar(self.battle_frame, length=200, maximum=100)
@@ -101,33 +112,37 @@ class Battle:
 
         self.move_buttons = []
         for move in self.pokemon1.moves:
-            button = tk.Button(self.moves_frame, text=move.name, command=lambda m=move: self.perform_move(self.pokemon1, self.pokemon2, m))
+            button = tk.Button(self.moves_frame, text=move.name, command=lambda m=move: self.perform_move(self.pokemon1, self.pokemon2, m), font=('Helvetica', 10))
             button.pack(side=tk.LEFT, padx=5)
             self.move_buttons.append(button)
 
-        self.log_label = tk.Label(self.root, text="", justify=tk.LEFT)
+        self.log_label = tk.Label(self.root, text="", justify=tk.LEFT, font=('Helvetica', 10))
         self.log_label.pack(pady=10)
 
     def log(self, message):
         self.log_label.config(text=message)
+        self.root.update()  # Update the GUI to show the message immediately
+        time.sleep(MESSAGE_DELAY / 1000)  # Delay in seconds
 
     def perform_move(self, attacker: Pokemon, defender: Pokemon, move: Move):
         self.log(f"{attacker.name} used {move.name}!")
-        self.apply_damage(defender, move, attacker.attack)
+        result_message = self.apply_damage(defender, move, attacker.attack)
         self.update_health()
+        self.log(result_message)
 
         if self.check_faint(defender):
             self.log(f"{defender.name} fainted!")
             self.disable_move_buttons()
         else:
             self.disable_move_buttons()
-            self.root.after(1000, self.opponent_turn)
+            self.root.after(MESSAGE_DELAY, self.opponent_turn)
 
     def opponent_turn(self):
         move = np.random.choice(self.pokemon2.moves)
         self.log(f"{self.pokemon2.name} used {move.name}!")
-        self.apply_damage(self.pokemon1, move, self.pokemon2.attack)
+        result_message = self.apply_damage(self.pokemon1, move, self.pokemon2.attack)
         self.update_health()
+        self.log(result_message)
 
         if self.check_faint(self.pokemon1):
             self.log(f"{self.pokemon1.name} fainted!")
@@ -137,10 +152,31 @@ class Battle:
     def apply_damage(self, defender: Pokemon, move: Move, attacker_attack: int):
         type_advantages = self.type_advantage()
         type_multiplier = type_advantages[move.m_type][defender.p_type]
-        damage = (move.power * (attacker_attack / 10)) * type_multiplier - (defender.defense / 10)  # Adjusted damage calculation
+        effectiveness_message = ""
+
+        if type_multiplier > 1:
+            effectiveness_message = "It's super effective!"
+        elif type_multiplier < 1:
+            effectiveness_message = "It's not very effective..."
+
+        critical = 1.5 if np.random.random() < 0.1 else 1  # 10% chance for critical hit
+        critical_message = "A critical hit!" if critical > 1 else ""
+
+        damage = (move.power * (attacker_attack / 10)) * type_multiplier * critical - (defender.defense / 10)
         damage = max(1, damage)  # Ensure at least 1 damage is dealt
         defender.bars -= damage
         defender.bars = max(0, defender.bars)  # Ensure health doesn't drop below 0
+
+        if defender.status == StatusEffect.BURN:
+            defender.bars -= 1  # Burn effect reduces health each turn
+
+        status_effect_message = ""
+        if move.m_type == MoveType.FIRE and np.random.random() < 0.1:
+            defender.apply_status_effect(StatusEffect.BURN)
+            status_effect_message = f"{defender.name} is burned!"
+
+        result_message = f"{effectiveness_message} {critical_message} {status_effect_message}"
+        return result_message.strip()
 
     def update_health(self):
         self.pokemon1_health['value'] = self.pokemon1.health_percentage()
@@ -174,19 +210,19 @@ class PokemonSelectionApp:
         self.pokemon_var1.set(pokemon_names[0])
         self.pokemon_var2.set(pokemon_names[0])
 
-        tk.Label(self.selection_frame, text="Select your Pokemon:").grid(row=0, column=0)
-        self.pokemon_dropdown1 = ttk.Combobox(self.selection_frame, textvariable=self.pokemon_var1, values=pokemon_names)
+        tk.Label(self.selection_frame, text="Select your Pokemon:", font=('Helvetica', 12, 'bold')).grid(row=0, column=0)
+        self.pokemon_dropdown1 = ttk.Combobox(self.selection_frame, textvariable=self.pokemon_var1, values=pokemon_names, font=('Helvetica', 10))
         self.pokemon_dropdown1.grid(row=0, column=1)
 
-        tk.Button(self.selection_frame, text="Random", command=self.random_select_pokemon1).grid(row=0, column=2)
+        tk.Button(self.selection_frame, text="Random", command=self.random_select_pokemon1, font=('Helvetica', 10)).grid(row=0, column=2)
 
-        tk.Label(self.selection_frame, text="Select opponent Pokemon:").grid(row=1, column=0)
-        self.pokemon_dropdown2 = ttk.Combobox(self.selection_frame, textvariable=self.pokemon_var2, values=pokemon_names)
+        tk.Label(self.selection_frame, text="Select opponent Pokemon:", font=('Helvetica', 12, 'bold')).grid(row=1, column=0)
+        self.pokemon_dropdown2 = ttk.Combobox(self.selection_frame, textvariable=self.pokemon_var2, values=pokemon_names, font=('Helvetica', 10))
         self.pokemon_dropdown2.grid(row=1, column=1)
 
-        tk.Button(self.selection_frame, text="Random", command=self.random_select_pokemon2).grid(row=1, column=2)
+        tk.Button(self.selection_frame, text="Random", command=self.random_select_pokemon2, font=('Helvetica', 10)).grid(row=1, column=2)
 
-        tk.Button(self.selection_frame, text="Start Battle", command=self.start_battle).grid(row=2, columnspan=3, pady=10)
+        tk.Button(self.selection_frame, text="Start Battle", command=self.start_battle, font=('Helvetica', 12, 'bold')).grid(row=2, columnspan=3, pady=10)
 
     def random_select_pokemon1(self):
         self.pokemon_var1.set(np.random.choice([p.name for p in all_pokemons]))
@@ -204,24 +240,6 @@ class PokemonSelectionApp:
 if __name__ == "__main__":
     # Create Pokemon
     all_pokemons = [
-        Pokemon("Charizard", PokemonType.FIRE, 
-                [Move("Flamethrower", 10, MoveType.FIRE), Move("Fly", 8, MoveType.NORMAL), Move("Blast Burn", 12, MoveType.FIRE), Move("Fire Punch", 8, MoveType.FIRE)], 
-                {"ATTACK": 12, "DEFENSE": 8}),
-        Pokemon("Blastoise", PokemonType.WATER, 
-                [Move("Water Gun", 8, MoveType.WATER), Move("Bubblebeam", 6, MoveType.WATER), Move("Hydro Pump", 10, MoveType.WATER), Move("Surf", 9, MoveType.WATER)], 
-                {"ATTACK": 10, "DEFENSE": 10}),
-        Pokemon("Venusaur", PokemonType.GRASS, 
-                [Move("Vine Whip", 8, MoveType.GRASS), Move("Razor Leaf", 10, MoveType.GRASS), Move("Earthquake", 12, MoveType.NORMAL), Move("Frenzy Plant", 14, MoveType.GRASS)], 
-                {"ATTACK": 8, "DEFENSE": 12}),
-                Pokemon("Charmeleon", PokemonType.FIRE,
-                [Move("Ember", 6, MoveType.FIRE), Move("Scratch", 5, MoveType.NORMAL), Move("Flamethrower", 10, MoveType.FIRE), Move("Fire Punch", 8, MoveType.FIRE)],
-                {"ATTACK": 6, "DEFENSE": 5}),
-        Pokemon("Wartortle", PokemonType.WATER,
-                [Move("Bubblebeam", 6, MoveType.WATER), Move("Water Gun", 7, MoveType.WATER), Move("Headbutt", 5, MoveType.NORMAL), Move("Surf", 9, MoveType.WATER)],
-                {"ATTACK": 5, "DEFENSE": 5}),
-        Pokemon("Ivysaur", PokemonType.GRASS,
-                [Move("Vine Whip", 8, MoveType.GRASS), Move("Razor Leaf", 10, MoveType.GRASS), Move("Bullet Seed", 5, MoveType.GRASS), Move("Leech Seed", 6, MoveType.GRASS)],
-                {"ATTACK": 4, "DEFENSE": 6}),
         Pokemon("Charmander", PokemonType.FIRE,
                 [Move("Ember", 6, MoveType.FIRE), Move("Scratch", 5, MoveType.NORMAL), Move("Tackle", 4, MoveType.NORMAL), Move("Fire Punch", 8, MoveType.FIRE)],
                 {"ATTACK": 4, "DEFENSE": 2}),
@@ -231,6 +249,24 @@ if __name__ == "__main__":
         Pokemon("Bulbasaur", PokemonType.GRASS,
                 [Move("Vine Whip", 8, MoveType.GRASS), Move("Razor Leaf", 10, MoveType.GRASS), Move("Tackle", 4, MoveType.NORMAL), Move("Leech Seed", 6, MoveType.GRASS)],
                 {"ATTACK": 2, "DEFENSE": 4}),
+        Pokemon("Charmeleon", PokemonType.FIRE,
+                [Move("Ember", 6, MoveType.FIRE), Move("Scratch", 5, MoveType.NORMAL), Move("Flamethrower", 10, MoveType.FIRE), Move("Fire Punch", 8, MoveType.FIRE)],
+                {"ATTACK": 6, "DEFENSE": 5}),
+        Pokemon("Wartortle", PokemonType.WATER,
+                [Move("Bubblebeam", 6, MoveType.WATER), Move("Water Gun", 7, MoveType.WATER), Move("Headbutt", 5, MoveType.NORMAL), Move("Surf", 9, MoveType.WATER)],
+                {"ATTACK": 5, "DEFENSE": 5}),
+        Pokemon("Ivysaur", PokemonType.GRASS,
+                [Move("Vine Whip", 8, MoveType.GRASS), Move("Razor Leaf", 10, MoveType.GRASS), Move("Bullet Seed", 5, MoveType.GRASS), Move("Leech Seed", 6, MoveType.GRASS)],
+                {"ATTACK": 4, "DEFENSE": 6}),
+        Pokemon("Charizard", PokemonType.FIRE, 
+                [Move("Flamethrower", 10, MoveType.FIRE), Move("Fly", 8, MoveType.NORMAL), Move("Blast Burn", 12, MoveType.FIRE), Move("Fire Punch", 8, MoveType.FIRE)], 
+                {"ATTACK": 12, "DEFENSE": 8}),
+        Pokemon("Blastoise", PokemonType.WATER, 
+                [Move("Water Gun", 8, MoveType.WATER), Move("Bubblebeam", 6, MoveType.WATER), Move("Hydro Pump", 10, MoveType.WATER), Move("Surf", 9, MoveType.WATER)], 
+                {"ATTACK": 10, "DEFENSE": 10}),
+        Pokemon("Venusaur", PokemonType.GRASS, 
+                [Move("Vine Whip", 8, MoveType.GRASS), Move("Razor Leaf", 10, MoveType.GRASS), Move("Earthquake", 12, MoveType.NORMAL), Move("Frenzy Plant", 14, MoveType.GRASS)], 
+                {"ATTACK": 8, "DEFENSE": 12}),
         Pokemon("Pikachu", PokemonType.ELECTRIC, 
                 [Move("Thunder Shock", 6, MoveType.ELECTRIC), Move("Quick Attack", 5, MoveType.NORMAL), Move("Thunderbolt", 9, MoveType.ELECTRIC), Move("Iron Tail", 7, MoveType.NORMAL)], 
                 {"ATTACK": 7, "DEFENSE": 5}),
@@ -257,7 +293,7 @@ if __name__ == "__main__":
                 {"ATTACK": 9, "DEFENSE": 6}),
         Pokemon("Leafeon", PokemonType.GRASS, 
                 [Move("Razor Leaf", 7, MoveType.GRASS), Move("Quick Attack", 5, MoveType.NORMAL), Move("Solar Beam", 10, MoveType.GRASS), Move("Leaf Blade", 8, MoveType.GRASS)], 
-                {"ATTACK": 9, "DEFENSE": 8})
+                {"ATTACK": 9, "DEFENSE": 8}),
     ]
 
     # Start selection screen
